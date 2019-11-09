@@ -16,6 +16,7 @@ To force a loss of connectivity, try "stopservice wan".
 To install, this may be stored as e.g.
 /jffs/etc/config/wan-auto-reconnect.startup
 To address any concerns about router script size restrictions, feel free to strip the comments during installation.
+
 Test scope:
 * DD-WRT v3.0-r33345 std (09/11/17), Linksys WRT1200ACSv2, basic dialup with 3G dongle (D-Link DWR 157 rev. B).
 * DD-WRT v3.0-r33345 std (09/11/17), Linksys WRT1900ACSv2, basic setup as second router behind ISP specific, enforced first router with fiber connectivity.
