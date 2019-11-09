@@ -1,0 +1,43 @@
+
+Efter "ingen internet":
+
+root@gateway:~# ip route
+default via 85.184.180.1 dev eth0
+10.5.0.0/16 dev br0  proto kernel  scope link  src 10.5.0.1
+85.184.180.0/22 dev eth0  proto kernel  scope link  src 85.184.183.50
+127.0.0.0/8 dev lo  scope link
+169.254.0.0/16 dev br0  proto kernel  scope link  src 169.254.255.1
+
+-----
+
+Efter GEN-START med "stopservice wan", "startservice wan":
+
+root@gateway:~# ip route
+default via 85.184.148.1 dev eth0
+10.5.0.0/16 dev br0  proto kernel  scope link  src 10.5.0.1
+85.184.148.0/23 dev eth0  proto kernel  scope link  src 85.184.148.223
+127.0.0.0/8 dev lo  scope link
+169.254.0.0/16 dev br0  proto kernel  scope link  src 169.254.255.1
+
+-----
+
+Efter STOP "stopservice wan":
+
+root@gateway:~# ip route
+10.5.0.0/16 dev br0  proto kernel  scope link  src 10.5.0.1
+127.0.0.0/8 dev lo  scope link
+169.254.0.0/16 dev br0  proto kernel  scope link  src 169.254.255.1
+
+-----
+
+Efter START med "startservice wan":
+
+root@gateway:~# ip route
+default via 85.184.148.1 dev eth0
+10.5.0.0/16 dev br0  proto kernel  scope link  src 10.5.0.1
+85.184.148.0/23 dev eth0  proto kernel  scope link  src 85.184.148.223
+127.0.0.0/8 dev lo  scope link
+169.254.0.0/16 dev br0  proto kernel  scope link  src 169.254.255.1
+
+-----
+

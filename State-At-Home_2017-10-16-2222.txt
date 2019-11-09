@@ -1,0 +1,85 @@
+root@enterprise:~# ps | wc -l
+82
+root@enterprise:~# ps
+  PID USER       VSZ STAT COMMAND
+    1 root       936 S    /sbin/init earlyprintk
+    2 root         0 SW   [kthreadd]
+    3 root         0 SW   [ksoftirqd/0]
+    4 root         0 SW   [kworker/0:0]
+    5 root         0 SW<  [kworker/0:0H]
+    7 root         0 SW   [rcu_sched]
+    8 root         0 SW   [rcu_bh]
+    9 root         0 SW   [migration/0]
+   10 root         0 SW<  [lru-add-drain]
+   11 root         0 SW   [cpuhp/0]
+   12 root         0 SW   [cpuhp/1]
+   13 root         0 SW   [migration/1]
+   14 root         0 SW   [ksoftirqd/1]
+   15 root         0 SW   [kworker/1:0]
+   16 root         0 SW<  [kworker/1:0H]
+   41 root         0 SW   [kworker/u4:3]
+  209 root         0 SW   [oom_reaper]
+  210 root         0 SW<  [writeback]
+  212 root         0 SW<  [crypto]
+  213 root         0 SW<  [bioset]
+  214 root         0 SW   [kworker/0:1]
+  216 root         0 SW<  [kblockd]
+  224 root         0 SW<  [ata_sff]
+  241 root         0 SW<  [watchdogd]
+  280 root         0 SW   [kswapd0]
+  281 root         0 SW<  [vmstat]
+  349 root         0 SW<  [bioset]
+  354 root         0 SW<  [bioset]
+  359 root         0 SW<  [bioset]
+  364 root         0 SW<  [bioset]
+  369 root         0 SW<  [bioset]
+  374 root         0 SW<  [bioset]
+  379 root         0 SW<  [bioset]
+  384 root         0 SW<  [bioset]
+  389 root         0 SW<  [bioset]
+  394 root         0 SW<  [bioset]
+  399 root         0 SW<  [bioset]
+  477 root         0 SW   [irq/39-f1090000]
+  478 root         0 SW   [irq/40-f1090000]
+  508 root         0 SW   [ubi_bgt0d]
+  509 root         0 SW<  [bioset]
+  517 root         0 SW<  [kworker/1:1H]
+  659 root         0 SW<  [kworker/0:1H]
+  913 root       728 S    /sbin/hotplug2 --set-rules-file /etc/hotplug2.rules --persistent
+  921 root      1632 S    watchdog
+  944 root         0 SW<  [cfg80211]
+ 1024 root         0 SW   [scsi_eh_0]
+ 1025 root         0 SW<  [scsi_tmf_0]
+ 1026 root         0 SW   [scsi_eh_1]
+ 1027 root         0 SW<  [scsi_tmf_1]
+ 1061 root         0 SW   [ubi_bgt1d]
+ 1062 root         0 SW   [ubifs_bgt1_0]
+ 1067 root      2320 S    startservice_f init_start -f
+ 1276 root      1048 S    telnetd
+ 1294 root       804 S    dropbear -b /tmp/loginprompt -r /tmp/root/.ssh/ssh_host_rsa_key -p 22
+ 1311 root      1624 S    dnsmasq -u root -g root --conf-file=/tmp/dnsmasq.conf --cache-size=1500 --dhcp-option=252," "
+ 1408 root         0 Z    [redial]
+ 1412 root      1888 S    ttraff
+ 1414 root      1048 S    syslogd -L
+ 1427 root      4388 S    httpd -p 80
+ 1433 root      3628 S    httpd -S
+ 1435 root      1324 S    resetbutton
+ 1519 root      1076 S    {wan-auto-reconn} /bin/sh /jffs/etc/config/wan-auto-reconnect_2017-10-05-2000.startup
+ 1703 root         0 SW   [scsi_eh_2]
+ 1707 root         0 SW<  [scsi_tmf_2]
+ 1708 root         0 SW   [usb-storage]
+ 1746 root         0 SW<  [bioset]
+ 2281 root       920 S    pppd file /tmp/ppp/options.pppoe
+ 2458 root      1632 S    process_monitor
+ 2463 root      1588 S    wland
+ 2544 root       684 S    cron
+10802 root       872 S    dropbear -b /tmp/loginprompt -r /tmp/root/.ssh/ssh_host_rsa_key -p 22
+10890 root      1056 S    -sh
+13959 root         0 SW   [kworker/u4:1]
+14398 root      1048 S    sleep 5
+14399 root      1048 R    ps
+30663 root         0 DW   [kworker/u4:0]
+31960 root         0 SW   [kworker/1:1]
+31994 root      2228 S    hostapd -B -P /var/run/ath0_hostapd.pid /tmp/ath0_hostap.conf
+32077 root      2228 S    hostapd -B -P /var/run/ath1_hostapd.pid /tmp/ath1_hostap.conf
+root@enterprise:~#

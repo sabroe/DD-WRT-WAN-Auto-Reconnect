@@ -1,0 +1,658 @@
+#!/bin/sh
+
+#
+# DD-WRT startup script "wan-auto-reconnect.startup".
+#
+# Monitors WAN connectivity, reconnects if necessary.
+# It is an intended goal to detect loss of internet access and reconnect 
+# _without_ disturbing ongoing communication on the inner LAN network.
+#
+# This was originally intended for a vehicular application connecting with a 3G 
+# dongle, and it may apply for unstable ISPs messing around with their networks 
+# and their customers.
+#
+# To test, this may be run directly.
+# To force a loss of connectivity, try "stopservice wan".
+#
+# To install, this may be stored as e.g.
+# /jffs/etc/config/wan-auto-reconnect.startup
+# To address any concerns about router script size restrictions, feel free to strip the comments during installation.
+#
+# Test scope:
+#     - DD-WRT v3.0-r33345 std (09/11/17), Linksys WRT1200ACSv2, basic dialup with 3G dongle (D-Link DWR 157 rev. B).
+#     - DD-WRT v3.0-r33345 std (09/11/17), Linksys WRT1900ACSv2, basic setup as second router behind ISP specific, enforced first router with fiber connectivity.
+#     - IPv4 only, for now.
+#
+# Authored by Morten Sabroe Mortensen, novice DD-WRT user.
+#
+
+
+#
+# Duration after boot and during which WAN connectivity is not to be disturbed.
+# This is in seconds.
+#
+readonly UPTIME_LIMIT=30
+
+#
+# Duration between testing the state of the WAN connection.
+# This is in seconds.
+#
+readonly CONNECTION_TEST_INTERVAL=5
+
+#
+# Number of packets to be send to ping a remote address.
+# An address is pingable if at least one packet is received in response.
+#
+readonly CONNECTION_TEST_PACKET_COUNT=3
+
+#
+# Duration to wait for an initiated connect to complete.
+# This is in seconds.
+#
+readonly WAN_AWAIT_CONNECTED_LIMIT=15
+
+#
+# Time for the start of this script.
+#
+beginMonitorTime=0
+
+#
+# Duration since the start of this script.
+# This is in seconds.
+#
+totalMonitorDuration=0
+
+#
+# Time for last test of WAN connectivity.
+#
+testConnectedTime=0
+
+#
+# Number of times connectivity to the WAN has been tested.
+#
+testConnectedCount=0
+
+#
+# Number of pings performed against an external address.
+#
+pingCount=0
+
+#
+# Address used for last successful ping.
+#
+addressAtLastConnectSuccess=""
+
+#
+# Number of times the external WAN address changed.
+#
+addressChangeCount=0
+
+#
+# Current state, if detected.
+# If set then this may be "disconnected" or "connected".
+#
+currentState=""
+
+#
+# Time for when the current state was set.
+#
+currentStateTime=0
+
+#
+# Duration of the current state, if detected.
+# This is in seconds.
+#
+currentStateDuration=0
+
+#
+# Duration waiting for the last initiated connect to complete.
+# This is in seconds.
+#
+lastAwaitConnectedDuration=0
+
+#
+# Total duration waiting for an initiated connect to complete.
+# This is in seconds.
+#
+totalAwaitConnectedDuration=0
+
+#
+# Total duration for the WAN being connected.
+# This is an estimated and counted only after the first detection of the WAN being connected.
+# This is in seconds.
+#
+totalConnectedDuration=0
+
+#
+# Total duration for the WAN being disconnected.
+# This is an estimated and counted only after the first detection of the WAN being connected.
+# This is in seconds.
+#
+totalDisconnectedDuration=0
+
+#
+# Number of times a WAN reconnect operation was initiated.
+#
+reconnectCount=0
+
+#
+# Number of times a WAN reconnect operation failed.
+#
+reconnectFailureCount=0
+
+#
+# Number of times a WAN reconnect operation succeeded.
+#
+reconnectSuccessCount=0
+
+#
+# Number of successive, initiated reconnect attempts.
+#
+successiveReconnectCount=0
+
+#
+# Maximum number of successive, initiated reconnect attempts.
+# If all reconnect attempts has succeeded then this will be at most 1.
+#
+maxSuccessiveReconnectCount=0
+
+#
+# Time of first detection of the WAN being connected.
+#
+firstConnectTime=0
+
+#
+# Number of successive, initiated reconnect attempts after the first detection of the WAN being connected.
+#
+trailingReconnectCount=0
+
+#
+# Maximum number of successive, initiated reconnect attempts after the first detection of the WAN being connected.
+#
+maxTrailingReconnectCount=0
+
+#
+# Longest duration in which the WAN connection has been disconnected after the first detection of the WAN being connected.
+# This is in seconds.
+#
+maxDisconnectedStateDuration=0
+
+#
+# Longest duration in which the WAN connection has been connected after the first detection of the WAN being connected.
+# This is in seconds.
+#
+maxConnectedStateDuration=0
+
+
+#
+# Prints a message to STDOUT.
+#
+function printToOutput()
+{
+    message="$1"
+    echo -n "$(date '+%Y-%m-%d %H:%M:%S')"
+    echo -n ":> "
+    echo "${message}"
+}
+
+#
+# Logs a message in the syslog.
+#
+function logToSyslog()
+{
+    priority="$1"   #{debug,info,notice,warning,err,crit,alert,emerg}
+    facility="user" #{auth,auth-priv,cron,daemon,kern,lpr,mail,mark,news,syslog,user,uucp,local0,local1,local2,local3,local4,local5,local6,local7}
+    message="$2"
+    logger -p "${facility}.${priority}" -t "wan-ar" "${message}"
+}
+
+#
+# Logs a message.
+# This is always printed to STDOUT.
+# If the message is preceeded with a priority in the argument list then the message is logged in the syslog.
+#
+function log()
+{
+    if [[ "$#" -ge 2 ]]; then
+        printToOutput "$2"
+        logToSyslog "$@"
+    else
+        printToOutput "$1"
+    fi
+}
+
+#
+# Logs all global status indicators.
+#
+function logIndicators()
+{
+    log debug "beginMonitorTime: ${beginMonitorTime}"
+    log debug "firstConnectTime: ${firstConnectTime}"
+    log debug "totalMonitorDuration: ${totalMonitorDuration}"
+
+    log debug "testConnectedTime: ${testConnectedTime}"
+    log debug "testConnectedCount: ${testConnectedCount}"
+    log debug "pingCount: ${pingCount}"
+    log debug "addressAtLastConnectSuccess: ${addressAtLastConnectSuccess}"
+    log debug "addressChangeCount: ${addressChangeCount}"
+
+    log debug "reconnectCount: ${reconnectCount}"
+    log debug "lastAwaitConnectedDuration: ${lastAwaitConnectedDuration}"
+    log debug "totalAwaitConnectedDuration: ${totalAwaitConnectedDuration}"
+    log debug "reconnectFailureCount: ${reconnectFailureCount}"
+    log debug "reconnectSuccessCount: ${reconnectSuccessCount}"
+
+    log debug "successiveReconnectCount: ${successiveReconnectCount}"
+    log debug "maxSuccessiveReconnectCount: ${maxSuccessiveReconnectCount}"
+    log debug "trailingReconnectCount: ${trailingReconnectCount}"
+    log debug "maxTrailingReconnectCount: ${maxTrailingReconnectCount}"
+
+    log debug "currentState: ${currentState}"
+    log debug "currentStateTime: ${currentStateTime}"
+    log debug "currentStateDuration: ${currentStateDuration}"
+
+    log debug "maxDisconnectedStateDuration: ${maxDisconnectedStateDuration}"
+    log debug "maxConnectedStateDuration: ${maxConnectedStateDuration}"   
+    log debug "totalConnectedDuration: ${totalConnectedDuration}"
+    log debug "totalDisconnectedDuration: ${totalDisconnectedDuration}"
+}
+
+#
+# Gets the uptime in seconds.
+#
+function uptimeInSeconds()
+{
+    if [ -e /proc/uptime ] ; then
+        echo "$(awk '{printf """%0.f""", $1}' /proc/uptime)"
+    else
+        echo "0";
+    fi
+}
+
+
+#
+# Gets the uptime in seconds.
+#
+function uptimeInMilliseconds()
+{
+    if [ -e /proc/uptime ] ; then
+        echo "$(awk '{print $1*1000}' /proc/uptime)"
+    else
+        echo "0";
+    fi
+}
+
+#
+# Gets a timestamp for the current time.
+# This is in seconds.
+#
+function getTime()
+{
+    uptimeInSeconds
+}
+
+#
+# Gets the duration set by two given timestamps.
+#
+function getDuration()
+{
+    local time0=$1
+    local time1=$2
+    local duration=$((time1-time0))
+    echo $duration
+}
+
+#
+# Gets the duration since a given timestamp.
+#
+function getDurationSince()
+{
+    local time0=$1
+    local time1=$(getTime)
+    local duration=$(getDuration $time0 $time1)
+    echo $duration
+}
+
+#
+# Gets a network address suitable for pinging to test WAN connectivity.
+#
+function getExternalWANAddress()
+{
+    #
+    # Note:
+    #     For reference, two separate examples in which an address is to be found.
+    #     Note the differences in format like e.g. "10.64.64.64 dev ppp0" vs.
+    #     "96.184.148.0/23 dev eth0".
+    #
+    #     Example 1:
+    #         DD-WRT with dialup connection, address to monitor is "10.138.197.41".
+    #
+    #         root@enterprise:~# uname -a
+    #         Linux enterprise 4.9.49 #50 SMP Mon Sep 11 02:06:04 CEST 2017 armv7l DD-WRT
+    #
+    #         root@enterprise:~# ip route show
+    #         default via 10.64.64.64 dev ppp0
+    #         10.64.64.64 dev ppp0  proto kernel  scope link  src 10.138.197.41
+    #         127.0.0.0/8 dev lo  scope link
+    #         169.254.0.0/16 dev br0  proto kernel  scope link  src 169.254.255.1
+    #         192.168.1.0/24 dev br0  proto kernel  scope link  src 192.168.1.1
+    #
+    #         root@enterprise:~# ip route get 10.64.64.64
+    #         10.64.64.64 dev ppp0  src 10.138.197.41
+    #             cache
+    #
+    #         root@enterprise:~# ping -c 3 10.64.64.64
+    #         PING 10.64.64.64 (10.64.64.64): 56 data bytes
+    #     
+    #         --- 10.64.64.64 ping statistics ---
+    #         3 packets transmitted, 0 packets received, 100% packet loss
+    #
+    #         root@enterprise:~# ping -c 3 10.138.197.41
+    #         PING 10.138.197.41 (10.138.197.41): 56 data bytes
+    #         64 bytes from 10.138.197.41: seq=0 ttl=64 time=0.094 ms
+    #         64 bytes from 10.138.197.41: seq=1 ttl=64 time=0.057 ms
+    #         64 bytes from 10.138.197.41: seq=2 ttl=64 time=0.099 ms
+    #     
+    #         --- 10.138.197.41 ping statistics ---
+    #         3 packets transmitted, 3 packets received, 0% packet loss
+    #         round-trip min/avg/max = 0.057/0.083/0.099 ms
+    #     
+    #     Example 2:
+    #         DD-WRT as secondary router, address to monitor is "96.184.148.117".
+    #
+    #         root@gateway:~# uname -a
+    #         Linux gateway 4.9.49 #50 SMP Mon Sep 11 02:06:04 CEST 2017 armv7l DD-WRT
+    #
+    #         root@gateway:~# ip route show
+    #         default via 96.184.148.1 dev eth0
+    #         10.5.0.0/16 dev br0  proto kernel  scope link  src 10.5.0.1
+    #         96.184.148.0/23 dev eth0  proto kernel  scope link  src 96.184.148.117
+    #         127.0.0.0/8 dev lo  scope link
+    #         169.254.0.0/16 dev br0  proto kernel  scope link  src 169.254.255.1
+    #
+    #         root@gateway:~# ip route get 96.184.148.1
+    #         96.184.148.1 dev eth0  src 96.184.148.117
+    #             cache
+    #         
+    #         root@gateway:~# ping -c 3 96.184.148.1
+    #         PING 96.184.148.1 (96.184.148.1): 56 data bytes
+    #         64 bytes from 96.184.148.1: seq=0 ttl=64 time=1.996 ms
+    #         64 bytes from 96.184.148.1: seq=1 ttl=64 time=3.776 ms
+    #         64 bytes from 96.184.148.1: seq=2 ttl=64 time=2.593 ms
+    #         
+    #         --- 96.184.148.1 ping statistics ---
+    #         3 packets transmitted, 3 packets received, 0% packet loss
+    #         round-trip min/avg/max = 1.996/2.788/3.776 ms
+    #             
+    #         root@gateway:~# ping -c 3 96.184.148.117
+    #         PING 96.184.148.117 (96.184.148.117): 56 data bytes
+    #         64 bytes from 96.184.148.117: seq=0 ttl=64 time=0.096 ms
+    #         64 bytes from 96.184.148.117: seq=1 ttl=64 time=0.065 ms
+    #         64 bytes from 96.184.148.117: seq=2 ttl=64 time=0.050 ms
+    #         
+    #         --- 96.184.148.117 ping statistics ---
+    #         3 packets transmitted, 3 packets received, 0% packet loss
+    #         round-trip min/avg/max = 0.050/0.070/0.096 ms
+    #             
+
+    local address=""
+    local route="$(ip route)"
+    local innerAddress="$(ip route show | grep -E """^default via""" | awk '{print $3}')"
+    if [[ ! -z "${innerAddress}" ]]; then
+        address="$(ip route get ${innerAddress} | grep -E """^${innerAddress}""" | awk '{print $5}')"
+    fi
+    echo "${address}"
+}
+
+#
+# Indicates, if an address is pingable.
+#
+function isAddressPingable
+{
+    local connected=1  #1=false
+
+    local address="$1"
+    local packetCount="$2"
+
+    if [[ -z "${address}" ]]; then
+        connected=1  #1=false
+    else
+        packetsReceived=0
+        if [[ ! -z "${address}" ]]; then
+            log debug "Pinging address ${address} with ${packetCount} packets ..."
+            pingCount=$((pingCount+1))
+            packetsReceived=$(ping -c ${packetCount} ${address} 2>/dev/null | awk '/packets received/ {print $4}')
+            log debug "Packets received: ${packetsReceived}"
+        fi
+  
+        if [ "${packetsReceived}" -eq 0 ]; then
+            connected=1  #1=false
+        else
+            connected=0  #0=true
+        fi
+    fi
+
+    return ${connected}
+}
+
+#
+# Indicates, if the WAN is connected.
+#
+function isWANConnected
+{
+    local connected=1  #1=false
+
+    local previousTestConnectedTime=${testConnectedTime}
+    local previousState=${currentState}
+    testConnectedTime=$(getTime)
+    testConnectedCount=$((testConnectedCount+1))
+
+    local address="$(getExternalWANAddress)"
+
+    if [[ -z "${address}" ]]; then
+        connected=1  #1=false
+    else
+        if ! isAddressPingable ${address} ${CONNECTION_TEST_PACKET_COUNT}; then
+            connected=1  #1=false
+        else
+            if [[ ! -z "${addressAtLastConnectSuccess}" ]] && [[ "${address}" != "${addressAtLastConnectSuccess}" ]]; then
+                addressChangeCount=$((addressChangeCount+1))
+            fi
+            addressAtLastConnectSuccess="${address}"
+                               
+            connected=0  #0=true
+        fi
+    fi
+
+    if [ ${connected} -eq "1" ]; then
+        if [[ "${currentState}" != "disconnected" ]]; then
+            currentStateTime=$(getTime)
+            currentState="disconnected"
+        fi      
+    else
+        if [[ "${currentState}" != "connected" ]]; then
+            currentStateTime=$(getTime)
+            currentState="connected"
+        fi
+    fi
+    
+    if [ "${firstConnectTime}" -ne "0" ]; then
+        if [ "${previousTestConnectedTime}" -ne "0" ]; then
+            local duration=$(getDuration ${previousTestConnectedTime} ${testConnectedTime})
+            if [[ "${currentState}" == "disconnected" ]]; then
+                totalDisconnectedDuration=$((totalDisconnectedDuration+duration))
+            else
+                if [[ "${currentState}" == "connected" ]]; then
+                    totalConnectedDuration=$((totalConnectedDuration+duration))
+                fi
+            fi
+        fi
+    fi
+    
+    if [ "${currentStateTime}" -ne "0" ]; then
+        currentStateDuration=$(getDurationSince currentStateTime)
+    fi
+
+    if [ "${firstConnectTime}" -ne "0" ]; then
+        if [[ "${currentState}" == "disconnected" ]]; then
+            if [ "${currentStateDuration}" -gt "${maxDisconnectedStateDuration}" ]; then
+                maxDisconnectedStateDuration=${currentStateDuration}
+            fi
+        else
+            if [[ "${currentState}" == "connected" ]]; then
+                if [ "${currentStateDuration}" -gt "${maxConnectedStateDuration}" ]; then
+                    maxConnectedStateDuration=${currentStateDuration}
+                fi
+            fi
+        fi
+    fi
+
+    if [ ${connected} -eq "0" ]; then
+        if [ "${firstConnectTime}" -eq "0" ]; then
+            firstConnectTime=$(getTime)
+        fi
+    fi
+
+    return ${connected}
+}
+
+#
+# Disconnects the WAN.
+#
+function wanDisconnect()
+{
+    log info "Stopping service WAN ..."
+    stopservice wan
+    log info "Stopped service WAN."
+}
+
+#
+# Initiates connect of the WAN.
+#
+function wanInitiateConnect()
+{
+    log info "Starting service WAN ..."
+    startservice wan
+    log info "Started service WAN."
+}
+
+#
+# Initiates connect of the WAN.
+#
+function wanAwaitConnected()
+{
+    local connected=1  #1=false
+
+    log info "Waiting for service WAN to connect ..."
+    lastAwaitConnectedDuration=0
+    
+    local timeLimit=${WAN_AWAIT_CONNECTED_LIMIT}
+    local time0=$(getTime)
+    local cont=true
+    while ${cont}; do
+        sleep 1
+        if isWANConnected; then
+            connected=0  #0=true
+            cont=false
+        else
+            duration=$(getDurationSince $time0)
+            log debug "WAN await connected duration: ${duration} seconds"
+            if [[ "${duration}" -ge "${timeLimit}" ]]; then
+                cont=false
+            fi
+        fi
+    done
+
+    local duration=$(getDurationSince $time0)
+    lastAwaitConnectedDuration=${duration}
+    totalAwaitConnectedDuration=$((totalAwaitConnectedDuration+duration))
+
+    log debug "Waited for service WAN to connect."
+
+    return ${connected}
+}
+
+#
+# Connects the WAN.
+#
+function wanConnect()
+{
+    wanInitiateConnect
+    wanAwaitConnected
+}
+
+#
+# Reconnects the WAN.
+#
+function wanReconnect()
+{
+    reconnectCount=$((reconnectCount+1))
+
+    successiveReconnectCount=$((successiveReconnectCount+1))
+    if [ "${successiveReconnectCount}" -gt "${maxSuccessiveReconnectCount}" ]; then
+        maxSuccessiveReconnectCount=${successiveReconnectCount}
+    fi
+    
+    if [ "${firstConnectTime}" -ne "0" ]; then
+        trailingReconnectCount=$((trailingReconnectCount+1))
+        if [ "${trailingReconnectCount}" -gt "${maxTrailingReconnectCount}" ]; then
+            maxTrailingReconnectCount=${trailingReconnectCount}
+        fi
+    fi
+    
+    wanDisconnect
+#    sleep 1
+    if ! wanConnect; then
+        reconnectFailureCount=$((reconnectFailureCount+1))
+    else
+        successiveReconnectCount=0
+        trailingReconnectCount=0
+        reconnectSuccessCount=$((reconnectSuccessCount+1))
+    fi
+}
+
+#
+# Indicates, if it is allowed to try to reconnect to the WAN.
+#
+function isReconnectAllowed()
+{
+    local uptime=$(uptimeInSeconds)
+    log debug "Uptime is ${uptime} seconds, limit is ${UPTIME_LIMIT} seconds."
+    if [[ ! -z "${uptime}" ]] && [[ "${uptime}" -le "${UPTIME_LIMIT}" ]]; then
+       return 1;  #false
+    else
+        return 0;  #true
+    fi
+}
+
+#
+# Maintains the WAN connection.
+# If the WAN connection is disconnected then it is reconnected, if possible.
+#
+function maintainWANConnection()
+{
+    log debug "Inspecting connection ..."
+    if isWANConnected; then
+        log debug "WAN is accessible."
+    else
+        log notice "WAN is NOT accessible!"     
+        if isReconnectAllowed; then
+            log notice "Forcing a WAN reconnect!"       
+            wanReconnect
+        fi
+    fi 
+}
+
+beginMonitorTime=$(getTime)
+
+while true; do
+    log debug "Checking ..."
+    maintainWANConnection
+    totalMonitorDuration=$(getDurationSince $beginMonitorTime)   
+    logIndicators
+    if [[ "${currentState}" == "connected" ]]; then
+	log debug "Going to rest."
+        sleep ${CONNECTION_TEST_INTERVAL}
+	log debug "Waking up."
+    fi    
+done;
